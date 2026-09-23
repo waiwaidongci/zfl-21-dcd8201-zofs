@@ -32,5 +32,36 @@
       "qualified": false,
       "note": "仍偏快，振幅尚可"
     }
-  ]
+  ],
+  "releaseOrders": [
+    {
+      "id": "release_demo",
+      "clockId": "clock_demo",
+      "revisionOfId": null,
+      "reason": "initial",
+      "fullWindTorque": 10,
+      "residualTorque": 0.8,
+      "restingMinutes": 30,
+      "operator": "陈师傅",
+      "note": "拆机前发条扭矩释放登记，曲线末三次回升待换人复测",
+      "createdAt": "2026-06-16T00:00:00.000Z"
+    }
+  ],
+  "releaseCurves": [
+    {
+      "id": "curve_demo",
+      "clockId": "clock_demo",
+      "orderId": "release_demo",
+      "torques": [
+        9.2,
+        8.4,
+        7.6,
+        6.8,
+        7.1,
+        6.9
+      ],
+      "testedAt": "2026-06-16T00:30:00.000Z"
+    }
+  ],
+  "releaseRetests": []
 }

@@ -1,46 +1,9 @@
 const http = require("http");
-const { readFile, writeFile, mkdir } = require("fs/promises");
-const path = require("path");
+const { readDb, writeDb, makeId } = require("./src/releaseStore");
+const { releaseRoutes, handleRelease } = require("./src/releaseRoutes");
+const rules = require("./src/releaseRules");
 
 const PORT = Number(process.env.PORT || 3021);
-const DB_FILE = path.join(__dirname, "data", "db.json");
-
-const initialData = {
-  clocks: [
-    {
-      id: "clock_demo",
-      code: "CLK-1890-07",
-      escapementType: "瑞士杠杆式",
-      balanceFrequency: "18000vph",
-      targetDailyRateSeconds: 20,
-      note: "怀表机芯，走时偏快",
-      createdAt: new Date().toISOString()
-    }
-  ],
-  adjustments: [
-    {
-      id: "adjustment_demo",
-      clockId: "clock_demo",
-      currentDailyRateSeconds: 68,
-      direction: "慢针方向",
-      amount: "游丝快慢针向慢侧微调0.4格",
-      note: "初次调校，先保守处理",
-      createdAt: new Date().toISOString()
-    }
-  ],
-  retests: [
-    {
-      id: "retest_demo",
-      clockId: "clock_demo",
-      adjustmentId: "adjustment_demo",
-      testedAt: new Date().toISOString(),
-      dailyRateSeconds: 31,
-      amplitude: 248,
-      qualified: false,
-      note: "仍偏快，振幅尚可"
-    }
-  ]
-};
 
 const routes = [
   "GET /health",
@@ -52,26 +15,9 @@ const routes = [
   "POST /clocks/:id/retests",
   "GET /clocks/:id/latest-retest",
   "GET /adjustments",
-  "GET /retests"
+  "GET /retests",
+  ...releaseRoutes
 ];
-
-async function ensureDb() {
-  await mkdir(path.dirname(DB_FILE), { recursive: true });
-  try {
-    JSON.parse(await readFile(DB_FILE, "utf8"));
-  } catch {
-    await writeFile(DB_FILE, JSON.stringify(initialData, null, 2));
-  }
-}
-
-async function readDb() {
-  await ensureDb();
-  return JSON.parse(await readFile(DB_FILE, "utf8"));
-}
-
-async function writeDb(data) {
-  await writeFile(DB_FILE, JSON.stringify(data, null, 2));
-}
 
 function send(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -89,10 +35,6 @@ async function parseBody(req) {
     error.status = 400;
     throw error;
   }
-}
-
-function makeId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function required(body, fields) {
@@ -126,6 +68,7 @@ function latestAdjustment(db, clockId) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 }
 
+// 走时调校结论与发条拆机准入结论都从原始记录现算，保证刷新后一致。
 function clockSummary(db, clock) {
   const retest = latestRetest(db, clock.id);
   const adjustment = latestAdjustment(db, clock.id);
@@ -133,7 +76,8 @@ function clockSummary(db, clock) {
     ...clock,
     latestAdjustment: adjustment,
     latestRetest: retest,
-    qualified: retest ? retest.qualified : false
+    qualified: retest ? retest.qualified : false,
+    release: rules.clockReleaseSummary(db, clock.id)
   };
 }
 
@@ -144,6 +88,12 @@ async function handle(req, res) {
 
   if (req.method === "GET" && pathname === "/health") {
     return send(res, 200, { ok: true, service: "clock-escapement-tuning-api", routes });
+  }
+
+  // 发条扭矩释放与拆机准入台（请求入口集中在 src/releaseRoutes.js）。
+  if (pathname === "/releases" || pathname.includes("/releases")) {
+    const handled = await handleRelease(req, res, url);
+    if (handled) return;
   }
 
   if (req.method === "GET" && pathname === "/clocks") {
@@ -183,7 +133,15 @@ async function handle(req, res) {
     const clock = findClock(db, historyMatch[1]);
     const adjustments = db.adjustments.filter((item) => item.clockId === clock.id);
     const retests = db.retests.filter((item) => item.clockId === clock.id);
-    return send(res, 200, { data: { clock, adjustments, retests, latestRetest: latestRetest(db, clock.id) } });
+    return send(res, 200, {
+      data: {
+        clock,
+        adjustments,
+        retests,
+        latestRetest: latestRetest(db, clock.id),
+        release: rules.clockReleaseSummary(db, clock.id)
+      }
+    });
   }
 
   const adjustmentMatch = pathname.match(/^\/clocks\/([^/]+)\/adjustments$/);
